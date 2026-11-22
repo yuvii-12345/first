@@ -419,17 +419,35 @@ let cachedMeta: ModelMeta | null = null;
 
 export async function loadLumen(): Promise<LumenModel> {
   if (cachedModel) return cachedModel;
-  const [weightsRes, metaRes] = await Promise.all([
-    fetch("/model-weights.json"),
-    fetch("/model-meta.json").catch(() => null),
-  ]);
-  const weights = await weightsRes.json();
-  let meta: ModelMeta | null = null;
-  if (metaRes && metaRes.ok) {
+  // Try local, then fallback to GitHub raw (for Vercel preview without bundled weights)
+  const fallbacks = [
+    "/model-weights.json",
+    "https://raw.githubusercontent.com/yuvii-12345/first/arena/a29bff5b-first/public/model-weights.json",
+  ];
+  let weights: any = null;
+  for (const url of fallbacks) {
     try {
-      meta = await metaRes.json();
+      const r = await fetch(url);
+      if (r.ok) {
+        weights = await r.json();
+        break;
+      }
     } catch {}
   }
+  if (!weights) throw new Error("Failed to load model weights");
+
+  let meta: ModelMeta | null = null;
+  try {
+    const metaRes = await fetch("/model-meta.json");
+    if (metaRes.ok) meta = await metaRes.json();
+    else {
+      const fallbackMeta = await fetch(
+        "https://raw.githubusercontent.com/yuvii-12345/first/arena/a29bff5b-first/public/model-meta.json"
+      );
+      if (fallbackMeta.ok) meta = await fallbackMeta.json();
+    }
+  } catch {}
+
   cachedModel = new LumenModel(weights, meta ?? undefined);
   if (meta) cachedMeta = meta;
   return cachedModel;
