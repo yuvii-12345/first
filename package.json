@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "demo": "vite-node scripts/demo.ts"
+    "demo": "vite-node scripts/demo.ts",
+    "site": "node scripts/build-site.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

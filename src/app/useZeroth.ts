@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ScenarioId, ScenarioOptions } from "../scenarios";
 import type { RunResult, TamperTarget, VerificationSummary, WorkerRequest, WorkerResponse } from "./protocol";
+import ZerothWorker from "./worker?worker&inline";
 
 export interface ProgressItem {
   phase: string;
@@ -32,7 +33,8 @@ export function useZeroth() {
   const current = useRef(0);
 
   useEffect(() => {
-    const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+    // Inlined as a blob so the built app is a single script — no second fetch.
+    const worker = new ZerothWorker();
     workerRef.current = worker;
     worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
       const msg = ev.data;
