@@ -28,17 +28,23 @@ const cssPath = cssMatch ? "dist" + cssMatch[1] : null;
 const js = read(jsPath);
 const css = cssPath ? read(cssPath) : "";
 
+// Fold the stylesheet into the script so a host has to fetch exactly one file.
+const injector =
+  `(function(){try{var s=document.createElement("style");s.setAttribute("data-zeroth","1");` +
+  `s.textContent=${JSON.stringify(css)};document.head.appendChild(s)}catch(e){}})();\n`;
+const bundled = injector + js;
+
 mkdirSync("site", { recursive: true });
-writeFileSync("site/app.js", js);
+writeFileSync("site/app.js", bundled);
 writeFileSync("site/app.css", css);
 
 // The standalone page: same markup, everything inlined, no network at all.
 const inline = html
-  .replace(/<script type="module"[^>]*src="[^"]+"><\/script>/, `<script type="module">\n${js}\n</script>`)
-  .replace(/<link rel="stylesheet"[^>]*>/, `<style>\n${css}\n</style>`);
+  .replace(/<script type="module"[^>]*src="[^"]+"><\/script>/, `<script type="module">\n${bundled}\n</script>`)
+  .replace(/<link rel="stylesheet"[^>]*>/, "");
 writeFileSync("site/index.html", inline);
 
 const kb = (n) => `${(n / 1024).toFixed(1)} kB`;
-console.log(`site/app.js    ${kb(js.length)}`);
+console.log(`site/app.js    ${kb(bundled.length)} (styles inlined)`);
 console.log(`site/app.css   ${kb(css.length)}`);
 console.log(`site/index.html ${kb(inline.length)} (single file)`);
