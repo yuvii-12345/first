@@ -132,10 +132,18 @@ verify: e(C − [p(z)]₁, [1]₂) = e(π, [τ − z]₂)`}
           </p>
           <div className="formula">q_M·a·b + q_L·a + q_R·b + q_O·c + q_C = 0</div>
           <p>
-            That is enough for multiplication, addition, constants, booleans and public inputs. What it
-            cannot say is "the value in row 3, wire a is the same as the value in row 7, wire c" — so the
-            wires are interpolated into polynomials <code>a(X), b(X), c(X)</code> and tied together by a
-            permutation σ over three cosets of the domain:
+            That is enough for multiplication, addition, constants, booleans and public inputs. R1CS — the
+            encoding Groth16 uses — states each constraint as <code>⟨a, w⟩·⟨b, w⟩ = ⟨c, w⟩</code>: one
+            multiplication per row, and a separate linear combination of the witness for every wire. PLONK's
+            five selectors contain that (set <code>qR = qO = qC = 0</code>) but the gain is structural:
+            every row has the same shape, so the wiring is <em>one</em> permutation instead of <code>3n</code>
+            linear combinations, and a selector can be reused by every row that needs it.
+          </p>
+          <p>
+            What the gate equation cannot say is "the value in row 3, wire a is the same as the value in row
+            7, wire c" — so the wires are interpolated into polynomials{" "}
+            <code>a(X), b(X), c(X)</code> and tied together by a permutation σ over three cosets of the
+            domain:
           </p>
           <div className="formula">
             {`∏ (a + βx + γ)(b + βk₁x + γ)(c + βk₂x + γ)·z(x)

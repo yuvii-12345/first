@@ -74,10 +74,18 @@ export function executeRun(
   const circuit = built.circuit;
   const violations = auditWitness(circuit);
 
-  onProgress("Preprocessing", "committing to the selectors and the permutation");
-  const setupStart = performance.now();
   const key = cacheKey(scenario, opts);
-  let pk = pkCache.get(key);
+  const cached = pkCache.get(key);
+  onProgress(
+    "Preprocessing",
+    cached
+      ? "same circuit as last time — the proving key is cached"
+      : circuit.n > 1024
+        ? `building the ${circuit.n + 8} point reference string, then committing to the selectors (slow once per circuit size)`
+        : "committing to the selectors and the permutation",
+  );
+  const setupStart = performance.now();
+  let pk = cached;
   if (!pk) {
     pk = setup(circuit);
     if (pkCache.size >= MAX_CACHED_KEYS) {
