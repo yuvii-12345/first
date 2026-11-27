@@ -580,7 +580,48 @@ function Editor({
               </button>
             ))}
           </div>
-          {preview.built?.meta.dslError && <div className="callout danger" style={{ marginTop: 10 }}>{preview.built.meta.dslError}</div>}
+          {(() => {
+            const ex = EXAMPLE_PROGRAMS.find((e) => e.source === opts.source);
+            return ex ? (
+              <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
+                <span className="accent mono" style={{ fontSize: 11 }}>
+                  {ex.name}
+                </span>{" "}
+                — {ex.note}
+              </p>
+            ) : (
+              <p style={{ marginTop: 10, marginBottom: 0, fontSize: 12 }}>
+                Your program. Every arithmetic operation becomes a gate row; every name you reuse
+                becomes a copy constraint.
+              </p>
+            );
+          })()}
+          {preview.built?.meta.dslError && (
+            <div className="callout danger" style={{ marginTop: 10 }}>
+              {preview.built.meta.dslError}
+            </div>
+          )}
+          <div className="divider" />
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--dim)", lineHeight: 1.9 }}>
+            <div>
+              <span className="accent">secret</span> name = expr &nbsp;·&nbsp; the prover's witness,
+              never leaves the proof
+            </div>
+            <div>
+              <span className="accent">public</span> name = expr &nbsp;·&nbsp; the statement, visible to
+              the verifier
+            </div>
+            <div>
+              <span className="accent">let</span> name = expr &nbsp;·&nbsp; an intermediate wire
+            </div>
+            <div>
+              <span className="accent">assert</span> expr == expr &nbsp;·&nbsp; one constraint, checked on
+              every row
+            </div>
+            <div className="dim" style={{ marginTop: 4 }}>
+              operators + − * / , parentheses, decimal literals, and // comments
+            </div>
+          </div>
         </>
       );
   }

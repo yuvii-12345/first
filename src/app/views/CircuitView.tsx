@@ -149,6 +149,12 @@ export function CircuitView({
               ))}
             </div>
           </div>
+          <div style={{ borderTop: "1px solid var(--line)", padding: "8px 14px" }}>
+            <span className="dim mono" style={{ fontSize: 10.5, lineHeight: 1.6 }}>
+              {`rows 0–1 anchor the constants: qL·a + qC = 0 forces $zero = 0 and $one = 1.
+unused wires point at $zero, so its copy cycle is the longest in the table.`}
+            </span>
+          </div>
         </Panel>
 
         <div className="stack">

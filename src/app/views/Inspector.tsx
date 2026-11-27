@@ -128,8 +128,8 @@ export function InspectorView({
         }
         lead={
           <>
-            Each stage below ran in the prover. Hover the timeline to move through the protocol; every
-            number shown is the real value that went into the transcript.
+            The protocol in order, with the real commitments, challenges and evaluations of this run. The
+            badge on each step says who does it — prover, verifier, or both; click any step to inspect it.
           </>
         }
         right={<Badge tone={result.ok ? "ok" : "bad"}>{result.ok ? "verified" : "rejected"}</Badge>}
@@ -139,13 +139,22 @@ export function InspectorView({
         <Panel title={`Steps · ${fmtMs(total)}`} tight>
           <div className="timeline" style={{ padding: "12px 14px" }}>
             {steps.map((s, i) => (
-              <div key={s.id} className="tl-item" data-active={i === selected}>
+              <div
+                key={s.id}
+                className="tl-item"
+                data-active={i === selected}
+                role="button"
+                tabIndex={0}
+                style={{ cursor: "pointer" }}
+                onClick={() => setSelected(i)}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setSelected(i)}
+              >
                 <div className="tl-rail">
                   <span className="tl-dot" />
                   {i < steps.length - 1 && <span className="tl-line" />}
                 </div>
                 <div className="tl-body">
-                  <div className="tl-title" onClick={() => setSelected(i)}>
+                  <div className="tl-title">
                     {i + 1}. {s.title}
                   </div>
                   <div className="tl-sub">
