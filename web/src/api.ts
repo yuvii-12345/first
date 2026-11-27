@@ -12,6 +12,8 @@ import type {
   GenerateResponse,
   LabStatus,
   LogitLensAnalysis,
+  KVCacheBenchResult,
+  LLM100MProof,
   MatmulBenchRow,
   PatchingAnalysis,
   StatusResponse,
@@ -299,6 +301,17 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ sizes }),
     });
+  },
+
+  fetch100MProof: async (): Promise<LLM100MProof> => {
+    const res = await fetch("/models/glassbox-100m-proof.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status} loading Glassbox-100M proof`);
+    return (await res.json()) as LLM100MProof;
+  },
+
+  runKVCacheBenchmark: async (): Promise<KVCacheBenchResult> => {
+    await browserEngine.init("chat");
+    return browserEngine.benchmarkKVCache(28, 24);
   },
 };
 

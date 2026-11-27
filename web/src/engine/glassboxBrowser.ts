@@ -23,6 +23,7 @@ import type {
   LabStatus,
   LogitLensAnalysis,
   LogitLensCell,
+  KVCacheBenchResult,
   MatmulBenchRow,
   ModelPreset,
   PatchingAnalysis,
@@ -395,7 +396,8 @@ function applyRoPEInPlace(
   H: number,
   T: number,
   Dh: number,
-  base: number
+  base: number,
+  posOffset = 0
 ): void {
   const half = Dh >> 1;
   const cosTab = new Float32Array(T * half);
@@ -403,7 +405,7 @@ function applyRoPEInPlace(
   for (let i = 0; i < half; i++) {
     const invFreq = Math.pow(base, (-2.0 * i) / Dh);
     for (let t = 0; t < T; t++) {
-      const ang = t * invFreq;
+      const ang = (posOffset + t) * invFreq;
       cosTab[t * half + i] = Math.cos(ang);
       sinTab[t * half + i] = Math.sin(ang);
     }
@@ -423,6 +425,41 @@ function applyRoPEInPlace(
         x[row + 2 * i + 1] = x0 * s + x1 * c;
       }
     }
+  }
+}
+
+export class BrowserKVCache {
+  nLayers: number;
+  nKvHeads: number;
+  maxLen: number;
+  headDim: number;
+  seqLen = 0;
+  kBufs: Float32Array[];
+  vBufs: Float32Array[];
+
+  constructor(cfg: GPTConfig) {
+    this.nLayers = cfg.n_layers;
+    this.nKvHeads = cfg.n_kv_heads ?? cfg.n_heads;
+    this.maxLen = cfg.context_len;
+    this.headDim = cfg.d_model / cfg.n_heads;
+    const cap = this.nKvHeads * this.maxLen * this.headDim;
+    this.kBufs = Array.from({ length: this.nLayers }, () => new Float32Array(cap));
+    this.vBufs = Array.from({ length: this.nLayers }, () => new Float32Array(cap));
+  }
+
+  append(layer: number, kNew: Float32Array, vNew: Float32Array, Tnew: number): number {
+    const Hkv = this.nKvHeads;
+    const Dh = this.headDim;
+    const pos = this.seqLen;
+    const kStore = this.kBufs[layer];
+    const vStore = this.vBufs[layer];
+    for (let h = 0; h < Hkv; h++) {
+      const srcBase = h * Tnew * Dh;
+      const dstBase = (h * this.maxLen + pos) * Dh;
+      kStore.set(kNew.subarray(srcBase, srcBase + Tnew * Dh), dstBase);
+      vStore.set(vNew.subarray(srcBase, srcBase + Tnew * Dh), dstBase);
+    }
+    return pos + Tnew;
   }
 }
 
@@ -491,13 +528,19 @@ export class BrowserGPTModel {
       ablateHeads?: Map<number, Set<number>>;
       ablationMode?: "zero" | "mean";
       patch?: PatchSpec;
+      kvCache?: BrowserKVCache;
     }
   ): { logits: Float32Array; trace?: ForwardTrace } {
     const { d_model: D, n_layers: L, n_heads: H, d_ff: FF, rope_base: ropeBase, rmsnorm_eps: eps } =
       this.cfg;
+    const Hkv = this.cfg.n_kv_heads ?? H;
     const Dh = D / H;
+    const kvDim = Hkv * Dh;
+    const groupSize = H / Hkv;
     const scale = 1.0 / Math.sqrt(Dh);
     const T = tokenIds.length;
+    const kvCache = opts?.kvCache;
+    const posOffset = kvCache ? kvCache.seqLen : 0;
     const capture = Boolean(opts?.captureTrace);
     const ablateHeads = opts?.ablateHeads;
     const ablationMode = opts?.ablationMode || "zero";
@@ -528,64 +571,83 @@ export class BrowserGPTModel {
     for (let l = 0; l < L; l++) {
       const blk = this.blocks[l];
 
-      // ---- Attention Sub-layer ----
+      // ---- Grouped-Query Attention (GQA) Sub-layer ----
       const xNorm1 = rmsNorm(x, blk.norm1, T, D, eps);
       const qFlat = matmulNT(xNorm1, blk.wQ, T, D, D);
-      const kFlat = matmulNT(xNorm1, blk.wK, T, D, D);
-      const vFlat = matmulNT(xNorm1, blk.wV, T, D, D);
+      const kFlat = matmulNT(xNorm1, blk.wK, T, D, kvDim);
+      const vFlat = matmulNT(xNorm1, blk.wV, T, D, kvDim);
 
-      // Reshape [T, H, Dh] -> [H, T, Dh]
+      // Reshape Q: [T, H, Dh] -> [H, T, Dh] and K/V: [T, Hkv, Dh] -> [Hkv, T, Dh]
       const qH = new Float32Array(H * T * Dh);
-      const kH = new Float32Array(H * T * Dh);
-      const vH = new Float32Array(H * T * Dh);
+      const kNew = new Float32Array(Hkv * T * Dh);
+      const vNew = new Float32Array(Hkv * T * Dh);
       for (let t = 0; t < T; t++) {
         for (let h = 0; h < H; h++) {
           const src = t * D + h * Dh;
           const dst = (h * T + t) * Dh;
+          for (let d = 0; d < Dh; d++) qH[dst + d] = qFlat[src + d];
+        }
+        for (let h = 0; h < Hkv; h++) {
+          const src = t * kvDim + h * Dh;
+          const dst = (h * T + t) * Dh;
           for (let d = 0; d < Dh; d++) {
-            qH[dst + d] = qFlat[src + d];
-            kH[dst + d] = kFlat[src + d];
-            vH[dst + d] = vFlat[src + d];
+            kNew[dst + d] = kFlat[src + d];
+            vNew[dst + d] = vFlat[src + d];
           }
         }
       }
 
-      applyRoPEInPlace(qH, H, T, Dh, ropeBase);
-      applyRoPEInPlace(kH, H, T, Dh, ropeBase);
+      applyRoPEInPlace(qH, H, T, Dh, ropeBase, posOffset);
+      applyRoPEInPlace(kNew, Hkv, T, Dh, ropeBase, posOffset);
 
-      // Causal scaled dot-product attention per head
+      let kSrc: Float32Array = kNew;
+      let vSrc: Float32Array = vNew;
+      let kvStrideT = T;
+      let Tk = T;
+      if (kvCache) {
+        Tk = kvCache.append(l, kNew, vNew, T);
+        kSrc = kvCache.kBufs[l];
+        vSrc = kvCache.vBufs[l];
+        kvStrideT = kvCache.maxLen;
+      }
+
+      // Causal scaled dot-product GQA attention per head
       const ctxH = new Float32Array(H * T * Dh);
-      const layerProbs = capture ? new Float32Array(H * T * T) : null;
-      const scores = new Float32Array(T);
+      const layerProbs = capture ? new Float32Array(H * T * Tk) : null;
+      const scores = new Float32Array(Tk);
       const ablateSet = ablateHeads?.get(l);
 
       for (let h = 0; h < H; h++) {
-        const hOff = h * T * Dh;
+        const hkv = Math.floor(h / groupSize);
+        const qHeadOff = h * T * Dh;
+        const kvHeadOff = hkv * kvStrideT * Dh;
         for (let qi = 0; qi < T; qi++) {
-          const qRow = hOff + qi * Dh;
+          const absQ = posOffset + qi;
+          const qRow = qHeadOff + qi * Dh;
+          const maxK = Math.min(Tk - 1, absQ);
           let mx = -Infinity;
-          for (let kj = 0; kj <= qi; kj++) {
-            const kRow = hOff + kj * Dh;
+          for (let kj = 0; kj <= maxK; kj++) {
+            const kRow = kvHeadOff + kj * Dh;
             let dot = 0.0;
-            for (let d = 0; d < Dh; d++) dot += qH[qRow + d] * kH[kRow + d];
+            for (let d = 0; d < Dh; d++) dot += qH[qRow + d] * kSrc[kRow + d];
             const sc = dot * scale;
             scores[kj] = sc;
             if (sc > mx) mx = sc;
           }
           let sum = 0.0;
-          for (let kj = 0; kj <= qi; kj++) {
+          for (let kj = 0; kj <= maxK; kj++) {
             const e = Math.exp(scores[kj] - mx);
             scores[kj] = e;
             sum += e;
           }
           const invSum = 1.0 / (sum || 1.0);
-          const outRow = hOff + qi * Dh;
-          for (let kj = 0; kj <= qi; kj++) {
+          const outRow = qHeadOff + qi * Dh;
+          for (let kj = 0; kj <= maxK; kj++) {
             const w = scores[kj] * invSum;
-            if (layerProbs) layerProbs[(h * T + qi) * T + kj] = w;
-            const vRow = hOff + kj * Dh;
+            if (layerProbs) layerProbs[(h * T + qi) * Tk + kj] = w;
+            const vRow = kvHeadOff + kj * Dh;
             for (let d = 0; d < Dh; d++) {
-              ctxH[outRow + d] += w * vH[vRow + d];
+              ctxH[outRow + d] += w * vSrc[vRow + d];
             }
           }
         }
@@ -595,15 +657,15 @@ export class BrowserGPTModel {
           if (ablationMode === "mean") {
             const meanVec = new Float32Array(Dh);
             for (let t = 0; t < T; t++) {
-              const row = hOff + t * Dh;
+              const row = qHeadOff + t * Dh;
               for (let d = 0; d < Dh; d++) meanVec[d] += ctxH[row + d];
             }
             for (let d = 0; d < Dh; d++) meanVec[d] /= T;
             for (let t = 0; t < T; t++) {
-              ctxH.set(meanVec, hOff + t * Dh);
+              ctxH.set(meanVec, qHeadOff + t * Dh);
             }
           } else {
-            ctxH.fill(0, hOff, hOff + T * Dh);
+            ctxH.fill(0, qHeadOff, qHeadOff + T * Dh);
           }
         }
       }
@@ -672,6 +734,10 @@ export class BrowserGPTModel {
       }
 
       x = xOut;
+    }
+
+    if (kvCache) {
+      kvCache.seqLen += T;
     }
 
     if (trace) {
@@ -806,7 +872,7 @@ export class GlassboxBrowserRuntime {
       ablateMap.get(l)!.add(h);
     }
 
-    const maxNew = Math.max(1, Math.min(140, payload.max_new_tokens ?? 100));
+    const maxNew = Math.max(1, Math.min(140, payload.max_new_tokens ?? 112));
     const temperature = payload.temperature ?? 0.3;
     const topK = payload.top_k ?? 16;
     const topP = payload.top_p ?? 0.9;
@@ -815,13 +881,42 @@ export class GlassboxBrowserRuntime {
     const stepsOut: GeneratedTokenStep[] = [];
     const V = this.model.cfg.vocab_size;
 
+    // Use O(T) GQA KV-Cache whenever mean-ablation is not active and sequence fits in context window
+    const abMode = payload.ablation_mode || "zero";
+    let kvCache: BrowserKVCache | undefined =
+      abMode !== "mean" && seq.length <= this.model.cfg.context_len
+        ? new BrowserKVCache(this.model.cfg)
+        : undefined;
+
     for (let stepIdx = 0; stepIdx < maxNew; stepIdx++) {
-      const ctx = seq.slice(-this.model.cfg.context_len);
-      const { logits } = this.model.forward(ctx, {
-        ablateHeads: ablateMap.size > 0 ? ablateMap : undefined,
-        ablationMode: payload.ablation_mode || "zero",
-      });
-      const lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+      let lastLogits: Float32Array;
+      if (kvCache && kvCache.seqLen < this.model.cfg.context_len) {
+        if (stepIdx === 0) {
+          const ctx = seq.slice(-this.model.cfg.context_len);
+          const { logits } = this.model.forward(ctx, {
+            ablateHeads: ablateMap.size > 0 ? ablateMap : undefined,
+            ablationMode: abMode,
+            kvCache,
+          });
+          lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+        } else {
+          const { logits } = this.model.forward([seq[seq.length - 1]], {
+            ablateHeads: ablateMap.size > 0 ? ablateMap : undefined,
+            ablationMode: abMode,
+            kvCache,
+          });
+          lastLogits = logits.subarray(0, V);
+        }
+      } else {
+        kvCache = undefined;
+        const ctx = seq.slice(-this.model.cfg.context_len);
+        const { logits } = this.model.forward(ctx, {
+          ablateHeads: ablateMap.size > 0 ? ablateMap : undefined,
+          ablationMode: abMode,
+        });
+        lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+      }
+
       const sampled = this.sampleNextToken(lastLogits, temperature, topK, topP);
 
       if (sampled.nextId === EOS_ID) break;
@@ -867,11 +962,26 @@ export class GlassboxBrowserRuntime {
     const genIds: number[] = [];
     const tokens: GeneratedTokenStep[] = [];
     const V = this.model.cfg.vocab_size;
+    let kvCache: BrowserKVCache | undefined =
+      seq.length <= this.model.cfg.context_len ? new BrowserKVCache(this.model.cfg) : undefined;
 
     for (let stepIdx = 0; stepIdx < Math.min(140, payload.max_new_tokens); stepIdx++) {
-      const ctx = seq.slice(-this.model.cfg.context_len);
-      const { logits } = this.model.forward(ctx);
-      const lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+      let lastLogits: Float32Array;
+      if (kvCache && kvCache.seqLen < this.model.cfg.context_len) {
+        if (stepIdx === 0) {
+          const ctx = seq.slice(-this.model.cfg.context_len);
+          const { logits } = this.model.forward(ctx, { kvCache });
+          lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+        } else {
+          const { logits } = this.model.forward([seq[seq.length - 1]], { kvCache });
+          lastLogits = logits.subarray(0, V);
+        }
+      } else {
+        kvCache = undefined;
+        const ctx = seq.slice(-this.model.cfg.context_len);
+        const { logits } = this.model.forward(ctx);
+        lastLogits = logits.subarray((ctx.length - 1) * V, ctx.length * V);
+      }
       const s = this.sampleNextToken(lastLogits, payload.temperature, payload.top_k, payload.top_p);
       seq.push(s.nextId);
       genIds.push(s.nextId);
@@ -1424,6 +1534,74 @@ export class GlassboxBrowserRuntime {
       });
     }
     return { results };
+  }
+
+  /** Live in-browser benchmark comparing O(T) GQA KV-Cache decoding vs O(T^2) full-sequence recomputation. */
+  benchmarkKVCache(promptTokens = 28, decodeTokens = 24): KVCacheBenchResult {
+    const V = this.model.cfg.vocab_size;
+    const H = this.model.cfg.n_heads;
+    const Hkv = this.model.cfg.n_kv_heads ?? H;
+    const maxAllowed = Math.min(this.model.cfg.context_len - 2, promptTokens + decodeTokens);
+    const pLen = Math.min(promptTokens, Math.max(8, maxAllowed - 8));
+    const dLen = Math.max(4, maxAllowed - pLen);
+
+    const basePrompt = this.tokenizer
+      .encode("User: What is Glassbox-100M and how does Grouped-Query Attention with KV cache work?\nGlassbox:", true, false)
+      .slice(0, pLen);
+    while (basePrompt.length < pLen) basePrompt.push(65 + (basePrompt.length % 26));
+
+    // 1. Baseline O(T^2) full-sequence recomputation (greedy argmax for bit-exact comparison)
+    const fullSeq = [...basePrompt];
+    const fullLogitSnapshots: Float32Array[] = [];
+    const tFull0 = performance.now();
+    for (let s = 0; s < dLen; s++) {
+      const { logits } = this.model.forward(fullSeq);
+      const last = new Float32Array(logits.subarray((fullSeq.length - 1) * V, fullSeq.length * V));
+      fullLogitSnapshots.push(last);
+      let best = 0;
+      for (let v = 1; v < V; v++) if (last[v] > last[best]) best = v;
+      fullSeq.push(best);
+    }
+    const fullMs = Math.max(0.1, performance.now() - tFull0);
+
+    // 2. Accelerated O(T) GQA KV-Cache decoding
+    const cachedSeq = [...basePrompt];
+    const kvCache = new BrowserKVCache(this.model.cfg);
+    let maxDiff = 0;
+    const tCache0 = performance.now();
+    for (let s = 0; s < dLen; s++) {
+      let last: Float32Array;
+      if (s === 0) {
+        const { logits } = this.model.forward(cachedSeq, { kvCache });
+        last = logits.subarray((cachedSeq.length - 1) * V, cachedSeq.length * V);
+      } else {
+        const { logits } = this.model.forward([cachedSeq[cachedSeq.length - 1]], { kvCache });
+        last = logits.subarray(0, V);
+      }
+      const ref = fullLogitSnapshots[s];
+      for (let v = 0; v < V; v++) {
+        const d = Math.abs(last[v] - ref[v]);
+        if (d > maxDiff) maxDiff = d;
+      }
+      let best = 0;
+      for (let v = 1; v < V; v++) if (last[v] > last[best]) best = v;
+      cachedSeq.push(best);
+    }
+    const cachedMs = Math.max(0.1, performance.now() - tCache0);
+
+    return {
+      prompt_tokens: pLen,
+      decode_tokens: dLen,
+      full_ms: Math.round(fullMs * 10) / 10,
+      cached_ms: Math.round(cachedMs * 10) / 10,
+      speedup: Math.round((fullMs / cachedMs) * 100) / 100,
+      full_tok_s: Math.round((dLen / (fullMs / 1000)) * 10) / 10,
+      cached_tok_s: Math.round((dLen / (cachedMs / 1000)) * 10) / 10,
+      max_abs_diff: Number(maxDiff.toExponential(2)),
+      n_heads: H,
+      n_kv_heads: Hkv,
+      kv_compression: Math.round((H / Hkv) * 10) / 10,
+    };
   }
 }
 

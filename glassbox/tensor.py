@@ -234,6 +234,11 @@ class Tensor:
         n = _prod(sh)
         r = rng if rng is not None else random
         ctype = _ctype_for(dtype)
+        if n >= 65536 and mean == 0.0:
+            buf = (ctype * max(1, n))()
+            seed_u64 = r.getrandbits(64)
+            LIB.gb_fill_randn(buf, n, float(std), seed_u64, _dtype_code(dtype))
+            return cls(_buf=buf, shape=sh, dtype=dtype, requires_grad=requires_grad, name=name)
         vals = [r.gauss(mean, std) for _ in range(n)]
         buf = (ctype * max(1, n))(*vals)
         return cls(_buf=buf, shape=sh, dtype=dtype, requires_grad=requires_grad, name=name)
@@ -1008,24 +1013,38 @@ def flash_attention(
     v: Tensor,
     causal: bool = True,
     return_probs: bool = False,
+    q_offset: int = 0,
 ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-    """FlashAttention-2 style tiled online-softmax attention (O(T) memory during training)."""
-    if q.shape != k.shape or q.shape != v.shape or q.ndim != 4:
-        raise ValueError(f"flash_attention expects matching 4D [B,H,T,D], got {q.shape}, {k.shape}, {v.shape}")
-    B, H, T_len, D = q.shape
-    BH = B * H
+    """FlashAttention-2 style tiled online-softmax attention (O(T) memory during training).
+    Supports standard MHA, Grouped-Query Attention (H_q % H_kv == 0), and KV-cache decoding (T_q <= T_k, q_offset).
+    """
+    if q.ndim != 4 or k.ndim != 4 or v.ndim != 4 or k.shape != v.shape:
+        raise ValueError(f"flash_attention expects 4D [B,H_q,T_q,D] & [B,H_kv,T_k,D], got {q.shape}, {k.shape}, {v.shape}")
+    B, H_q, T_q, D = q.shape
+    Bk, H_kv, T_k, Dk = k.shape
+    if B != Bk or D != Dk or H_q % H_kv != 0:
+        raise ValueError(f"Incompatible GQA shapes: Q={q.shape}, K={k.shape}")
     scale = 1.0 / math.sqrt(D)
     ctype = _ctype_for(q.dtype)
 
     o_buf = (ctype * max(1, q.numel))()
-    l_buf = (ctype * max(1, BH * T_len))()
-    probs_buf = (ctype * max(1, BH * T_len * T_len))() if return_probs else None
+    l_buf = (ctype * max(1, B * H_q * T_q))()
+    probs_buf = (ctype * max(1, B * H_q * T_q * T_k))() if return_probs else None
 
-    LIB.gb_flash_attn_fwd(
-        q._buf, k._buf, v._buf,
-        o_buf, l_buf, probs_buf,
-        BH, T_len, D, scale, 1 if causal else 0, q._dtype_code,
-    )
+    use_gqa = (H_q != H_kv) or (T_q != T_k) or (q_offset != 0)
+    if use_gqa:
+        LIB.gb_flash_attn_gqa_fwd(
+            q._buf, k._buf, v._buf,
+            o_buf, l_buf, probs_buf,
+            B, H_q, H_kv, T_q, T_k, D,
+            scale, 1 if causal else 0, int(q_offset), q._dtype_code,
+        )
+    else:
+        LIB.gb_flash_attn_fwd(
+            q._buf, k._buf, v._buf,
+            o_buf, l_buf, probs_buf,
+            B * H_q, T_q, D, scale, 1 if causal else 0, q._dtype_code,
+        )
 
     req = is_grad_enabled() and (q.requires_grad or k.requires_grad or v.requires_grad)
     out = Tensor(
@@ -1033,7 +1052,7 @@ def flash_attention(
         shape=q.shape,
         dtype=q.dtype,
         requires_grad=req,
-        _op="FlashAttn",
+        _op="FlashAttnGQA" if H_q != H_kv else "FlashAttn",
         _parents=(q, k, v) if req else (),
     )
     if req:
@@ -1041,12 +1060,21 @@ def flash_attention(
             dq = (ctype * max(1, q.numel))()
             dk = (ctype * max(1, k.numel))()
             dv = (ctype * max(1, v.numel))()
-            LIB.gb_flash_attn_bwd(
-                q._buf, k._buf, v._buf,
-                o_buf, l_buf, out.grad._buf,
-                dq, dk, dv,
-                BH, T_len, D, scale, 1 if causal else 0, q._dtype_code,
-            )
+            if use_gqa:
+                LIB.gb_flash_attn_gqa_bwd(
+                    q._buf, k._buf, v._buf,
+                    o_buf, l_buf, out.grad._buf,
+                    dq, dk, dv,
+                    B, H_q, H_kv, T_q, T_k, D,
+                    scale, 1 if causal else 0, int(q_offset), q._dtype_code,
+                )
+            else:
+                LIB.gb_flash_attn_bwd(
+                    q._buf, k._buf, v._buf,
+                    o_buf, l_buf, out.grad._buf,
+                    dq, dk, dv,
+                    B * H_q, T_q, D, scale, 1 if causal else 0, q._dtype_code,
+                )
             if q.requires_grad:
                 q._accum_grad(dq)
             if k.requires_grad:
@@ -1056,7 +1084,7 @@ def flash_attention(
         out._backward = _backward
 
     if return_probs:
-        probs_tensor = Tensor(_buf=probs_buf, shape=(B, H, T_len, T_len), dtype=q.dtype, requires_grad=False)
+        probs_tensor = Tensor(_buf=probs_buf, shape=(B, H_q, T_q, T_k), dtype=q.dtype, requires_grad=False)
         return out, probs_tensor
     return out
 

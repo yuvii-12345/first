@@ -44,14 +44,14 @@ interface ChatTabProps {
 }
 
 const CHAT_STARTERS = [
-  { label: "Who are you?", tag: "Identity" },
+  { label: "What is Glassbox-100M?", tag: "100M LLM" },
+  { label: "What is GQA?", tag: "3:1 GQA" },
+  { label: "Do you have CUDA kernels?", tag: "Pure CUDA" },
+  { label: "What is a KV cache?", tag: "KV-Cache" },
   { label: "How does FlashAttention work?", tag: "Attention" },
-  { label: "What is RoPE?", tag: "Embeddings" },
   { label: "What is Logit Lens?", tag: "Interp" },
-  { label: "What is Direct Logit Attribution?", tag: "Interp" },
   { label: "Write a fibonacci function", tag: "Python" },
   { label: "Write a haiku", tag: "Creative" },
-  { label: "Tell me a joke", tag: "Fun" },
 ];
 
 const INDUCTION_STARTERS = [
@@ -87,7 +87,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({
   const [temperature, setTemperature] = useState(0.25);
   const [topK, setTopK] = useState(12);
   const [topP, setTopP] = useState(0.9);
-  const [maxTokens, setMaxTokens] = useState(110);
+  const [maxTokens, setMaxTokens] = useState(124);
   const [xrayColorTokens, setXrayColorTokens] = useState(true);
   const [ablatedHeads, setAblatedHeads] = useState<[number, number][]>([]);
   const [switchingModel, setSwitchingModel] = useState(false);
@@ -300,7 +300,7 @@ export const ChatTab: React.FC<ChatTabProps> = ({
                     : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                Glassbox-Chat (4L)
+                Glassbox-Chat 1M (6L GQA)
               </button>
               <button
                 onClick={() => handleModelSwitch("induction")}
@@ -469,11 +469,11 @@ export const ChatTab: React.FC<ChatTabProps> = ({
                 <MessageSquare className="h-7 w-7 text-emerald-400" />
               </div>
               <h2 className="font-mono text-xl font-bold tracking-tight text-slate-100">
-                Chat with {isChatModel ? "Glassbox-Chat (4L)" : "Glassbox-Induction (3L)"}
+                Chat with {isChatModel ? "Glassbox-Chat 1M (6L · 6Q/2KV GQA)" : "Glassbox-Induction (3L)"}
               </h2>
               <p className="mt-1.5 max-w-lg text-xs leading-relaxed text-slate-400">
                 {isChatModel
-                  ? `A real ${(status.num_parameters / 1000).toFixed(0)}K-parameter GPT Transformer trained from scratch with zero PyTorch. Every reply streams token-by-token while exposing its live attention heads, token probabilities, and Logit Lens.`
+                  ? `A real ${(status.num_parameters / 1_000_000).toFixed(2)}M-parameter 6-layer GQA GPT Transformer with KV-Cache trained from scratch with zero PyTorch — sharing the exact 3:1 GQA + SwiGLU + RoPE architecture of Glassbox-100M.`
                   : "Our 3-layer Induction Circuit Transformer (97.9% recall, 100% induction heads). Send an Echo sequence to watch its induction heads copy tokens in real time!"}
               </p>
 

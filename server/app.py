@@ -345,7 +345,7 @@ class GlassboxHandler(BaseHTTPRequestHandler):
                         )
                         prompt = last_user
 
-                    from glassbox.transformer import InterpretabilityTrace
+                    from glassbox.transformer import InterpretabilityTrace, KVCache
 
                     ablate_set = {
                         (int(pair[0]), int(pair[1]))
@@ -359,18 +359,33 @@ class GlassboxHandler(BaseHTTPRequestHandler):
                     gen_ids = []
                     rng = _random.Random()
                     eos_id = SESSION.tokenizer.eos_id
+                    V = SESSION.cfg.vocab_size
+                    cache = (
+                        KVCache(SESSION.cfg, batch_size=1)
+                        if (ablation_mode != "mean" and len(seq) <= SESSION.cfg.context_len)
+                        else None
+                    )
 
                     with no_grad():
                         for step_idx in range(max_new):
-                            ctx = seq[-SESSION.cfg.context_len :]
                             trace = (
                                 InterpretabilityTrace(ablate_heads=ablate_set, ablation_mode=ablation_mode)
                                 if ablate_set
                                 else None
                             )
-                            logits, _ = SESSION.model.forward([ctx], trace=trace)
-                            V = SESSION.cfg.vocab_size
-                            last_off = (len(ctx) - 1) * V
+                            if cache is not None and cache.seq_len < SESSION.cfg.context_len:
+                                if step_idx == 0:
+                                    ctx = seq[-SESSION.cfg.context_len :]
+                                    logits, _ = SESSION.model.forward([ctx], trace=trace, kv_cache=cache)
+                                    last_off = (len(ctx) - 1) * V
+                                else:
+                                    logits, _ = SESSION.model.forward([[seq[-1]]], trace=trace, kv_cache=cache)
+                                    last_off = 0
+                            else:
+                                cache = None
+                                ctx = seq[-SESSION.cfg.context_len :]
+                                logits, _ = SESSION.model.forward([ctx], trace=trace)
+                                last_off = (len(ctx) - 1) * V
                             raw_logits = [float(logits._buf[last_off + v]) for v in range(V)]
                             temp = max(temperature, 1e-5)
                             scaled = [lg / temp for lg in raw_logits]

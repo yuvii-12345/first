@@ -497,7 +497,31 @@ def _build_chat_corpus() -> str:
         (
             ["How big are you?", "How many parameters do you have?", "What is your architecture?", "Explain your architecture"],
             [
-                "I am a 4-layer Pre-Norm GPT Transformer with 4 attention heads per layer, 96-dimensional residual stream, Rotary Position Embeddings (RoPE), RMSNorm, SwiGLU feed-forward blocks, and weight-tied embeddings — roughly 400K parameters trained from scratch.",
+                "This live chat model is a 6-layer 1.0M-parameter Pre-Norm GPT Transformer with 3:1 Grouped-Query Attention (6Q/2KV heads), 120d residual stream, RoPE, RMSNorm, SwiGLU, and KV-Cache — sharing the exact architecture of Glassbox-100M (100.68M params, 12L, 768d, 12Q/4KV GQA).",
+            ],
+        ),
+        (
+            ["What is Glassbox-100M?", "Tell me about Glassbox 100M", "Explain the 100M model", "How do I train on 10B tokens?"],
+            [
+                "Glassbox-100M is a 100,682,496-parameter Llama/GPT-style LLM (12 layers, 768d, 12Q/4KV GQA, SwiGLU 2048, RoPE, 32K BPE, 2048 context) paired with a pure from-scratch CUDA C++17 trainer (zero PyTorch) that streams .gbxtok uint16 shards for 100M-token (~2.5 min on H100) to 10B-token (~4 hr on H100) runs.",
+            ],
+        ),
+        (
+            ["What is GQA?", "What is Grouped-Query Attention?", "Explain GQA", "Why use GQA?"],
+            [
+                "Grouped-Query Attention (GQA) lets multiple query heads share fewer Key and Value heads (3:1 ratio: 12Q/4KV in Glassbox-100M, 6Q/2KV here). It preserves multi-head expressivity while cutting KV-cache memory bandwidth by 3x during generation.",
+            ],
+        ),
+        (
+            ["What is a KV cache?", "Explain KV cache", "How does KV caching work?"],
+            [
+                "A KV-Cache stores previously computed Key and Value vectors at each layer so generating each new token only attends from the single newest query to cached past keys — reducing decoding from O(T^2) to O(T) per token.",
+            ],
+        ),
+        (
+            ["Do you have CUDA kernels?", "Explain your CUDA engine", "How does the CUDA trainer work?"],
+            [
+                "Yes! In cuda/kernels.cu and cuda/train_glassbox_100m.cu, Glassbox implements pure from-scratch CUDA C++17 kernels (zero PyTorch, zero cuDNN): 2D tiled SGEMM, GQA FlashAttention-2, warp-shuffle RMSNorm, RoPE, SwiGLU, fused online Cross-Entropy, and AdamW.",
             ],
         ),
         # ---- Deep Technical Q&A about Glassbox Internals ----
@@ -861,6 +885,30 @@ DATASETS: Dict[str, Dict[str, Any]] = {
 }
 
 MODEL_PRESETS: Dict[str, Dict[str, Any]] = {
+    "glassbox_100m": {
+        "id": "glassbox_100m",
+        "name": "Glassbox-100M LLM (12L · 12Q/4KV GQA · 768d)",
+        "description": "Production 100.68M-parameter Llama/GPT-style LLM (12L, 768d, 12Q/4KV 3:1 GQA, SwiGLU 2048, RoPE, 32K BPE, 2048 ctx) built for pure-CUDA 100M–10B token pretraining.",
+        "n_layers": 12,
+        "n_heads": 12,
+        "n_kv_heads": 4,
+        "d_model": 768,
+        "d_ff": 2048,
+        "context_len": 2048,
+        "vocab_size": 32768,
+    },
+    "chat_gqa_1m": {
+        "id": "chat_gqa_1m",
+        "name": "Glassbox-Chat 1M GQA (6L · 6Q/2KV · 120d)",
+        "description": "6-layer Grouped-Query Attention Conversational GPT (1.01M params, 3:1 GQA matching Glassbox-100M, 128-token ctx, 700-token BPE).",
+        "n_layers": 6,
+        "n_heads": 6,
+        "n_kv_heads": 2,
+        "d_model": 120,
+        "d_ff": 320,
+        "context_len": 128,
+        "vocab_size": 700,
+    },
     "chat_4l": {
         "id": "chat_4l",
         "name": "Glassbox Chat (4L · 4H · 96d)",

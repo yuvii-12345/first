@@ -91,20 +91,27 @@ class LabSession:
             cfg_dict = {
                 "n_layers": preset["n_layers"],
                 "n_heads": preset["n_heads"],
+                "n_kv_heads": preset.get("n_kv_heads"),
                 "d_model": preset["d_model"],
                 "d_ff": preset["d_ff"],
                 "context_len": preset["context_len"],
                 "vocab_size": preset["vocab_size"],
             }
             if config_overrides:
-                for k in ("n_layers", "n_heads", "d_model", "d_ff", "context_len", "vocab_size"):
+                for k in ("n_layers", "n_heads", "n_kv_heads", "d_model", "d_ff", "context_len", "vocab_size"):
                     if k in config_overrides and config_overrides[k] is not None:
                         cfg_dict[k] = int(config_overrides[k])
             # Guarantee valid head divisibility & even head_dim for RoPE
-            cfg_dict["n_heads"] = max(1, min(8, cfg_dict["n_heads"]))
+            cfg_dict["n_heads"] = max(1, min(16, cfg_dict["n_heads"]))
             if cfg_dict["d_model"] % (cfg_dict["n_heads"] * 2) != 0:
                 unit = cfg_dict["n_heads"] * 2
                 cfg_dict["d_model"] = max(unit * 4, (cfg_dict["d_model"] // unit) * unit)
+            n_kv = cfg_dict.get("n_kv_heads")
+            if n_kv is not None:
+                n_kv = max(1, min(cfg_dict["n_heads"], int(n_kv)))
+                if cfg_dict["n_heads"] % n_kv != 0:
+                    n_kv = cfg_dict["n_heads"]
+                cfg_dict["n_kv_heads"] = n_kv
 
             corpus = custom_text if (custom_text and len(custom_text.strip()) >= 64) else get_dataset_text(dataset_id)
             self.corpus_text = corpus
@@ -143,6 +150,7 @@ class LabSession:
                 d_model=cfg_dict["d_model"],
                 n_layers=cfg_dict["n_layers"],
                 n_heads=cfg_dict["n_heads"],
+                n_kv_heads=cfg_dict.get("n_kv_heads"),
                 d_ff=cfg_dict["d_ff"],
                 context_len=cfg_dict["context_len"],
                 tie_weights=True,

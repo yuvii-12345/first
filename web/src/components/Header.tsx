@@ -3,6 +3,7 @@ import {
   Activity,
   Cpu,
   Eye,
+  Flame,
   GitBranch,
   Layers,
   MessageSquare,
@@ -16,6 +17,7 @@ import type { LabStatus } from "../types";
 
 export type TabId =
   | "chat"
+  | "llm-100m"
   | "attention"
   | "logit-lens"
   | "patching"
@@ -37,6 +39,7 @@ interface HeaderProps {
 
 const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "chat", label: "Chat & X-Ray", icon: MessageSquare },
+  { id: "llm-100m", label: "100M LLM & CUDA", icon: Flame },
   { id: "attention", label: "Attention & Ablation", icon: Eye },
   { id: "logit-lens", label: "Logit Lens & DLA", icon: Layers },
   { id: "patching", label: "Causal Patching", icon: GitBranch },
@@ -95,7 +98,11 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="hidden items-center gap-2 lg:flex">
               <div className="flex items-center gap-3 rounded-lg border border-obsidian-700/80 bg-obsidian-900/90 px-3 py-1.5 font-mono text-xs tabular-nums">
                 <span className="text-slate-400">
-                  {cfg.n_layers}L · {cfg.n_heads}H · {cfg.d_model}d
+                  {cfg.n_layers}L ·{" "}
+                  {cfg.n_kv_heads && cfg.n_kv_heads !== cfg.n_heads
+                    ? `${cfg.n_heads}Q/${cfg.n_kv_heads}KV GQA`
+                    : `${cfg.n_heads}H`}{" "}
+                  · {cfg.d_model}d
                 </span>
                 <span className="text-obsidian-700">|</span>
                 <span className="text-cyan-300">{paramStr} params</span>

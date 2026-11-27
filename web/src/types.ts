@@ -3,6 +3,7 @@ export interface GPTConfig {
   d_model: number;
   n_layers: number;
   n_heads: number;
+  n_kv_heads?: number | null;
   d_ff: number;
   context_len: number;
   rope_base: number;
@@ -99,6 +100,7 @@ export interface ModelPreset {
   description: string;
   n_layers: number;
   n_heads: number;
+  n_kv_heads?: number | null;
   d_model: number;
   d_ff: number;
   context_len: number;
@@ -339,4 +341,70 @@ export interface MatmulBenchRow {
   tiled_gflops: number;
   speedup: number;
   max_abs_error: number;
+}
+
+export interface KVCacheBenchResult {
+  prompt_tokens: number;
+  decode_tokens: number;
+  full_ms: number;
+  cached_ms: number;
+  speedup: number;
+  full_tok_s: number;
+  cached_tok_s: number;
+  max_abs_diff: number;
+  n_heads: number;
+  n_kv_heads: number;
+  kv_compression: number;
+}
+
+export interface LLM100MProof {
+  model_name: string;
+  exact_params: number;
+  config: {
+    vocab_size: number;
+    d_model: number;
+    n_layers: number;
+    n_heads: number;
+    n_kv_heads: number;
+    head_dim: number;
+    d_ff: number;
+    context_len: number;
+    tie_weights: boolean;
+    rope_base: number;
+  };
+  param_breakdown: {
+    tok_emb_tied: number;
+    attn_per_layer: number;
+    swiglu_per_layer: number;
+    norms_total: number;
+    all_12_layers: number;
+  };
+  verified_proofs: {
+    gqa_flash_attn_gradcheck: {
+      passed: boolean;
+      max_abs_error: number;
+      cosine_similarity: number;
+      checked_elements: number;
+    };
+    gqa_2l_transformer_gradcheck: {
+      passed: boolean;
+      max_abs_error: number;
+      cosine_similarity: number;
+      checked_elements: number;
+    };
+    kv_cache_max_diff: number;
+    cpp17_vs_python_loss_diff: number;
+    cpp17_vs_python_gnorm_diff: number;
+    gbx_402mb_python_load_sec: number;
+    gbx_checkpoint_bytes: number;
+  };
+  live_100m_cpu_smoke_steps: {
+    step: number;
+    loss: number;
+    gnorm: number;
+    step_sec: number;
+    gflops: number;
+  }[];
+  post_step_python_verified_loss: number;
+  random_init_baseline_loss: number;
 }

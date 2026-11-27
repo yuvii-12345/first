@@ -1,7 +1,9 @@
 """Glassbox: Deep Learning Framework & Transformer from Scratch + Mechanistic Interpretability Lab."""
 
 from glassbox.bpe import BPETokenizer
+from glassbox.checkpoint import load_gbx_checkpoint, read_gbx_header, save_gbx_checkpoint
 from glassbox.optim import AdamW, CosineWarmupScheduler, clip_grad_norm
+from glassbox.shards import TokenShardDataset, read_shard_header, write_token_shard
 from glassbox.tensor import (
     Tensor,
     cross_entropy,
@@ -14,7 +16,7 @@ from glassbox.tensor import (
     rmsnorm,
     rope,
 )
-from glassbox.transformer import GPTConfig, GPTTransformer, InterpretabilityTrace
+from glassbox.transformer import GPTConfig, GPTTransformer, InterpretabilityTrace, KVCache
 
 __all__ = [
     "Tensor",
@@ -31,7 +33,14 @@ __all__ = [
     "GPTConfig",
     "GPTTransformer",
     "InterpretabilityTrace",
+    "KVCache",
     "AdamW",
     "CosineWarmupScheduler",
     "clip_grad_norm",
+    "save_gbx_checkpoint",
+    "load_gbx_checkpoint",
+    "read_gbx_header",
+    "write_token_shard",
+    "read_shard_header",
+    "TokenShardDataset",
 ]

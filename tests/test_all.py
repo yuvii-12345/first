@@ -197,6 +197,66 @@ def test_training_and_interpretability():
     print("  PASS | All end-to-end training & mechanistic interpretability checks passed!")
 
 
+def test_gqa_kvcache_gbx_and_100m():
+    import random, tempfile
+    from pathlib import Path
+    from glassbox import (
+        KVCache, Tensor, flash_attention, load_gbx_checkpoint, no_grad,
+        save_gbx_checkpoint, write_token_shard, TokenShardDataset,
+    )
+
+    print("\n=== [8/8] Glassbox-100M GQA Gradcheck, KV-Cache, .gbx & .gbxtok Shards ===")
+    # 1. Float64 GQA FlashAttention-2 gradcheck (6Q / 2KV)
+    rng = random.Random(101)
+    q = Tensor.randn((2, 6, 7, 8), std=0.4, dtype="float64", requires_grad=True, rng=rng)
+    k = Tensor.randn((2, 2, 7, 8), std=0.4, dtype="float64", requires_grad=True, rng=rng)
+    v = Tensor.randn((2, 2, 7, 8), std=0.4, dtype="float64", requires_grad=True, rng=rng)
+    w = Tensor.randn((2, 6, 7, 8), std=0.3, dtype="float64", requires_grad=False, rng=rng)
+    res_gqa = gradcheck(lambda Q, K, V: (flash_attention(Q, K, V, causal=True) * w).sum(), [q, k, v])
+    assert res_gqa["passed"], f"GQA FlashAttention gradcheck failed: {res_gqa}"
+    print(f"  PASS | GQA FlashAttn2 float64 gradcheck: max_abs={res_gqa['max_abs_error']:.2e}, cos={res_gqa['cosine_similarity']:.12f}")
+
+    # 2. KV-Cache bit-exact equivalence
+    cfg_gqa = GPTConfig(vocab_size=64, d_model=48, n_layers=3, n_heads=6, n_kv_heads=2, d_ff=96, context_len=32)
+    m_gqa = GPTTransformer(cfg_gqa, seed=11)
+    seq = [3, 17, 42, 9, 25, 61, 8, 12, 33, 5]
+    with no_grad():
+        full_logits, _ = m_gqa([seq])
+        cache = KVCache(cfg_gqa, batch_size=1)
+        m_gqa([seq[:6]], kv_cache=cache)
+        max_kv_diff = 0.0
+        for pos in range(6, len(seq)):
+            lt, _ = m_gqa([[seq[pos]]], kv_cache=cache)
+            for vi in range(cfg_gqa.vocab_size):
+                d = abs(float(full_logits._buf[pos * cfg_gqa.vocab_size + vi]) - float(lt._buf[vi]))
+                if d > max_kv_diff:
+                    max_kv_diff = d
+    assert max_kv_diff < 1e-5, f"KV-Cache mismatch: {max_kv_diff}"
+    print(f"  PASS | GQA KV-Cache vs Full Forward:     max_diff={max_kv_diff:.2e}")
+
+    # 3. .gbx binary checkpoint & .gbxtok mmap shard streaming
+    with tempfile.TemporaryDirectory() as td:
+        gbx_p = Path(td) / "gqa.gbx"
+        save_gbx_checkpoint(gbx_p, m_gqa, step=7, tokens_seen=4096)
+        m_rel, info = load_gbx_checkpoint(gbx_p)
+        assert info["step"] == 7 and m_rel.num_parameters() == m_gqa.num_parameters()
+        tok_p = Path(td) / "train_0000.gbxtok"
+        write_token_shard(tok_p, list(range(512)), vocab_size=32768)
+        ds = TokenShardDataset([tok_p], seq_len=16)
+        xs, ys = ds.next_batch(2)
+        assert xs[0] == list(range(16)) and ys[0] == list(range(1, 17))
+        ds.close()
+    print("  PASS | .gbx binary checkpoint & .gbxtok mmap shards verified!")
+
+    # 4. Exact Glassbox-100M parameter accounting
+    cfg_100m = GPTConfig(
+        vocab_size=32768, d_model=768, n_layers=12, n_heads=12, n_kv_heads=4,
+        d_ff=2048, context_len=2048, tie_weights=True,
+    )
+    assert cfg_100m.exact_param_count() == 100_682_496
+    print(f"  PASS | Glassbox-100M exact parameter count: {cfg_100m.exact_param_count():,} (100.68M)")
+
+
 if __name__ == "__main__":
     test_primitive_gradchecks()
     test_full_transformer_gradcheck()
@@ -205,4 +265,5 @@ if __name__ == "__main__":
     test_bpe_tokenizer()
     test_matmul_benchmark()
     test_training_and_interpretability()
-    print("\nALL 7 VERIFICATION SUITES PASSED!")
+    test_gqa_kvcache_gbx_and_100m()
+    print("\nALL 8 VERIFICATION SUITES PASSED!")

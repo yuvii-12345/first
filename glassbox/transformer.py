@@ -4,6 +4,7 @@ and built-in Mechanistic Interpretability hooks (Logit Lens, Head Ablation, DLA,
 
 from __future__ import annotations
 
+import ctypes
 import math
 import random
 from dataclasses import asdict, dataclass, field
@@ -26,6 +27,7 @@ class GPTConfig:
     d_model: int = 64
     n_layers: int = 4
     n_heads: int = 4
+    n_kv_heads: Optional[int] = None  # Defaults to n_heads (MHA); < n_heads enables GQA (e.g. 12Q / 4KV)
     d_ff: int = 160
     context_len: int = 64
     rope_base: float = 10000.0
@@ -38,12 +40,106 @@ class GPTConfig:
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
         return self.d_model // self.n_heads
 
+    @property
+    def effective_kv_heads(self) -> int:
+        h_kv = self.n_kv_heads if self.n_kv_heads is not None else self.n_heads
+        assert h_kv > 0 and self.n_heads % h_kv == 0, "n_heads must be divisible by n_kv_heads"
+        return h_kv
+
+    def exact_param_count(self) -> int:
+        h_kv = self.effective_kv_heads
+        kv_dim = h_kv * self.head_dim
+        emb = self.vocab_size * self.d_model
+        lm = 0 if self.tie_weights else emb
+        attn = (self.d_model * self.d_model) * 2 + (kv_dim * self.d_model) * 2
+        mlp = 3 * self.d_model * self.d_ff
+        norms = 2 * self.d_model
+        return emb + lm + self.n_layers * (attn + mlp + norms) + self.d_model
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "GPTConfig":
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+class KVCache:
+    """Per-layer GQA Key/Value cache for O(T) autoregressive decoding."""
+
+    def __init__(self, cfg: GPTConfig, batch_size: int = 1) -> None:
+        self.cfg = cfg
+        self.batch_size = batch_size
+        self.n_kv_heads = cfg.effective_kv_heads
+        self.head_dim = cfg.head_dim
+        self.max_len = cfg.context_len
+        self.dtype = cfg.dtype
+        self.seq_len = 0
+        ctype = ctypes.c_float if cfg.dtype == "float32" else ctypes.c_double
+        self._ctype = ctype
+        self._elem_size = ctypes.sizeof(ctype)
+        cap = batch_size * self.n_kv_heads * self.max_len * self.head_dim
+        self._k_bufs = [(ctype * cap)() for _ in range(cfg.n_layers)]
+        self._v_bufs = [(ctype * cap)() for _ in range(cfg.n_layers)]
+
+    def reset(self) -> None:
+        self.seq_len = 0
+
+    def update(self, layer_idx: int, k_new: Tensor, v_new: Tensor) -> Tuple[Tensor, Tensor]:
+        """Append k_new, v_new of shape [B, H_kv, T_new, Dh] and return contiguous [B, H_kv, T_total, Dh]."""
+        B, H_kv, T_new, Dh = k_new.shape
+        pos = self.seq_len
+        new_total = pos + T_new
+        if new_total > self.max_len:
+            raise ValueError(f"KVCache overflow: {new_total} > {self.max_len}")
+
+        k_store = self._k_bufs[layer_idx]
+        v_store = self._v_bufs[layer_idx]
+        esz = self._elem_size
+        row_bytes_new = T_new * Dh * esz
+
+        # Copy each (b, h) slice into the pre-allocated cache
+        for bh in range(B * H_kv):
+            src_off = bh * T_new * Dh
+            dst_off = (bh * self.max_len + pos) * Dh
+            ctypes.memmove(
+                ctypes.addressof(k_store) + dst_off * esz,
+                ctypes.addressof(k_new._buf) + src_off * esz,
+                row_bytes_new,
+            )
+            ctypes.memmove(
+                ctypes.addressof(v_store) + dst_off * esz,
+                ctypes.addressof(v_new._buf) + src_off * esz,
+                row_bytes_new,
+            )
+
+        # Pack active prefix [B, H_kv, new_total, Dh] into contiguous tensors
+        out_numel = B * H_kv * new_total * Dh
+        k_out = (self._ctype * out_numel)()
+        v_out = (self._ctype * out_numel)()
+        row_bytes_tot = new_total * Dh * esz
+        for bh in range(B * H_kv):
+            src_off = bh * self.max_len * Dh
+            dst_off = bh * new_total * Dh
+            ctypes.memmove(
+                ctypes.addressof(k_out) + dst_off * esz,
+                ctypes.addressof(k_store) + src_off * esz,
+                row_bytes_tot,
+            )
+            ctypes.memmove(
+                ctypes.addressof(v_out) + dst_off * esz,
+                ctypes.addressof(v_store) + src_off * esz,
+                row_bytes_tot,
+            )
+
+        shape = (B, H_kv, new_total, Dh)
+        return (
+            Tensor(_buf=k_out, shape=shape, dtype=self.dtype, requires_grad=False),
+            Tensor(_buf=v_out, shape=shape, dtype=self.dtype, requires_grad=False),
+        )
+
+    def advance(self, n_tokens: int) -> None:
+        self.seq_len += n_tokens
 
 
 @dataclass
@@ -85,7 +181,7 @@ def _apply_residual_patch(x: Tensor, stage_idx: int, patch_map: Dict[Tuple[int, 
 
 
 class FlashCausalSelfAttention(Module):
-    """Multi-Head Causal Self-Attention with RoPE and FlashAttention-2 tiled kernel."""
+    """Multi-Head / Grouped-Query Causal Self-Attention with RoPE, FlashAttention-2, and KV-Cache."""
 
     def __init__(
         self,
@@ -96,39 +192,51 @@ class FlashCausalSelfAttention(Module):
         self.cfg = cfg
         self.layer_idx = layer_idx
         self.n_heads = cfg.n_heads
+        self.n_kv_heads = cfg.effective_kv_heads
         self.head_dim = cfg.head_dim
         self.d_model = cfg.d_model
+        kv_dim = self.n_kv_heads * self.head_dim
 
         in_std = 0.02
         resid_std = 0.02 / math.sqrt(2.0 * cfg.n_layers)
         pfx = f"blocks.{layer_idx}.attn"
 
         self.w_q = Linear(cfg.d_model, cfg.d_model, bias=False, std=in_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_q")
-        self.w_k = Linear(cfg.d_model, cfg.d_model, bias=False, std=in_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_k")
-        self.w_v = Linear(cfg.d_model, cfg.d_model, bias=False, std=in_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_v")
+        self.w_k = Linear(cfg.d_model, kv_dim, bias=False, std=in_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_k")
+        self.w_v = Linear(cfg.d_model, kv_dim, bias=False, std=in_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_v")
         self.w_o = Linear(cfg.d_model, cfg.d_model, bias=False, std=resid_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.w_o")
 
-    def __call__(self, x: Tensor, trace: Optional[InterpretabilityTrace] = None) -> Tensor:
+    def __call__(
+        self,
+        x: Tensor,
+        trace: Optional[InterpretabilityTrace] = None,
+        kv_cache: Optional[KVCache] = None,
+    ) -> Tensor:
         B, T_len, D = x.shape
         H = self.n_heads
+        H_kv = self.n_kv_heads
         Dh = self.head_dim
+        pos_offset = kv_cache.seq_len if kv_cache is not None else 0
 
         q = self.w_q(x).reshape(B, T_len, H, Dh).permute(0, 2, 1, 3)
-        k = self.w_k(x).reshape(B, T_len, H, Dh).permute(0, 2, 1, 3)
-        v = self.w_v(x).reshape(B, T_len, H, Dh).permute(0, 2, 1, 3)
+        k = self.w_k(x).reshape(B, T_len, H_kv, Dh).permute(0, 2, 1, 3)
+        v = self.w_v(x).reshape(B, T_len, H_kv, Dh).permute(0, 2, 1, 3)
 
-        # Rotary Position Embeddings on Q and K
-        q = rope(q, pos_offset=0, base=self.cfg.rope_base)
-        k = rope(k, pos_offset=0, base=self.cfg.rope_base)
+        # Rotary Position Embeddings on Q and K at absolute offset pos_offset
+        q = rope(q, pos_offset=pos_offset, base=self.cfg.rope_base)
+        k = rope(k, pos_offset=pos_offset, base=self.cfg.rope_base)
+
+        if kv_cache is not None:
+            k, v = kv_cache.update(self.layer_idx, k, v)
 
         need_probs = trace is not None and trace.capture_attn
         if need_probs:
-            attn_out, probs = flash_attention(q, k, v, causal=True, return_probs=True)
-            # Store batch-0 attention tensor [H, T, T]
+            attn_out, probs = flash_attention(q, k, v, causal=True, return_probs=True, q_offset=pos_offset)
+            # Store batch-0 attention tensor [H, T_q, T_k]
             probs_list = probs.tolist()[0]
             trace.attn_probs[self.layer_idx] = probs_list
         else:
-            attn_out = flash_attention(q, k, v, causal=True, return_probs=False)
+            attn_out = flash_attention(q, k, v, causal=True, return_probs=False, q_offset=pos_offset)
 
         # Optional Head Ablation intervention (inference / mechanistic analysis)
         if trace is not None and trace.ablate_heads:
@@ -200,8 +308,13 @@ class TransformerBlock(Module):
         self.norm2 = RMSNorm(cfg.d_model, eps=cfg.rmsnorm_eps, dtype=cfg.dtype, name=f"{pfx}.norm2")
         self.mlp = SwiGLU(cfg.d_model, cfg.d_ff, resid_std=resid_std, dtype=cfg.dtype, rng=rng, name=f"{pfx}.mlp")
 
-    def __call__(self, x: Tensor, trace: Optional[InterpretabilityTrace] = None) -> Tensor:
-        attn_delta = self.attn(self.norm1(x), trace=trace)
+    def __call__(
+        self,
+        x: Tensor,
+        trace: Optional[InterpretabilityTrace] = None,
+        kv_cache: Optional[KVCache] = None,
+    ) -> Tensor:
+        attn_delta = self.attn(self.norm1(x), trace=trace, kv_cache=kv_cache)
         x = x + attn_delta
         if trace is not None and trace.capture_residuals:
             trace.residuals.append((f"L{self.layer_idx}.attn", x.detach().clone()))
@@ -252,11 +365,13 @@ class GPTTransformer(Module):
         input_ids: Sequence[Sequence[int]],
         targets: Optional[Sequence[Sequence[int]]] = None,
         trace: Optional[InterpretabilityTrace] = None,
+        kv_cache: Optional[KVCache] = None,
     ) -> Tuple[Tensor, Optional[Tensor]]:
         B = len(input_ids)
         T_len = len(input_ids[0])
-        if T_len > self.cfg.context_len:
-            raise ValueError(f"Sequence length {T_len} exceeds context_len {self.cfg.context_len}")
+        total_len = (kv_cache.seq_len if kv_cache is not None else 0) + T_len
+        if total_len > self.cfg.context_len:
+            raise ValueError(f"Sequence length {total_len} exceeds context_len {self.cfg.context_len}")
 
         flat_ids: List[int] = []
         for row in input_ids:
@@ -271,7 +386,10 @@ class GPTTransformer(Module):
             trace.embed_contrib = x.detach().reshape(T_len, self.cfg.d_model).clone()
 
         for block in self.blocks:
-            x = block(x, trace=trace)
+            x = block(x, trace=trace, kv_cache=kv_cache)
+
+        if kv_cache is not None:
+            kv_cache.advance(T_len)
 
         if trace is not None:
             trace.final_pre_norm = x.detach().clone()
@@ -291,8 +409,9 @@ class GPTTransformer(Module):
         input_ids: Sequence[Sequence[int]],
         targets: Optional[Sequence[Sequence[int]]] = None,
         trace: Optional[InterpretabilityTrace] = None,
+        kv_cache: Optional[KVCache] = None,
     ) -> Tuple[Tensor, Optional[Tensor]]:
-        return self.forward(input_ids, targets=targets, trace=trace)
+        return self.forward(input_ids, targets=targets, trace=trace, kv_cache=kv_cache)
 
     def generate_stream(
         self,
@@ -303,19 +422,36 @@ class GPTTransformer(Module):
         top_p: float = 0.92,
         seed: Optional[int] = None,
         stop_token_id: Optional[int] = None,
+        use_kv_cache: bool = True,
+        trace: Optional[InterpretabilityTrace] = None,
     ) -> Generator[Dict[str, Any], None, None]:
-        """Autoregressive sampling yielding each token + next-token probability distribution."""
+        """Autoregressive sampling with O(T) GQA KV-Cache yielding each token + next-token probs."""
         rng = random.Random(seed) if seed is not None else random.Random()
         seq = list(prompt_ids)
         if not seq:
             seq = [256]  # <BOS>
 
+        V = self.cfg.vocab_size
+        cache: Optional[KVCache] = None
+        if use_kv_cache and len(seq) <= self.cfg.context_len:
+            cache = KVCache(self.cfg, batch_size=1)
+
         with no_grad():
             for step_idx in range(max_new_tokens):
-                ctx = seq[-self.cfg.context_len :]
-                logits, _ = self.forward([ctx])
-                V = self.cfg.vocab_size
-                last_off = (len(ctx) - 1) * V
+                if cache is not None and cache.seq_len < self.cfg.context_len:
+                    if step_idx == 0:
+                        ctx = seq[-self.cfg.context_len :]
+                        logits, _ = self.forward([ctx], trace=trace, kv_cache=cache)
+                        last_off = (len(ctx) - 1) * V
+                    else:
+                        logits, _ = self.forward([[seq[-1]]], trace=trace, kv_cache=cache)
+                        last_off = 0
+                else:
+                    cache = None  # Context window saturated -> sliding window fallback
+                    ctx = seq[-self.cfg.context_len :]
+                    logits, _ = self.forward([ctx], trace=trace)
+                    last_off = (len(ctx) - 1) * V
+
                 raw_logits = [float(logits._buf[last_off + v]) for v in range(V)]
 
                 # Compute full un-filtered distribution for entropy & telemetry

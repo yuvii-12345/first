@@ -5,6 +5,7 @@ import { ChatTab } from "./components/ChatTab";
 import { EngineProofTab } from "./components/EngineProofTab";
 import { GenerateBpeTab } from "./components/GenerateBpeTab";
 import { Header, type TabId } from "./components/Header";
+import { LLM100MTab } from "./components/LLM100MTab";
 import { LogitLensTab } from "./components/LogitLensTab";
 import { PatchingTab } from "./components/PatchingTab";
 import { TrainingTab } from "./components/TrainingTab";
@@ -228,6 +229,7 @@ export const App: React.FC = () => {
                 onJumpToTab={handleJumpToTab}
               />
             )}
+            {activeTab === "llm-100m" && <LLM100MTab />}
             {activeTab === "training" && (
               <TrainingTab
                 status={status}

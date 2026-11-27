@@ -151,6 +151,24 @@ def _load_library() -> ctypes.CDLL:
     lib.gb_add_inplace.argtypes = [c_vp, c_vp, c_int, c_dbl, c_int]
     lib.gb_add_inplace.restype = None
 
+    lib.gb_flash_attn_gqa_fwd.argtypes = [
+        c_vp, c_vp, c_vp, c_vp, c_vp, c_vp,
+        c_int, c_int, c_int, c_int, c_int, c_int,
+        c_dbl, c_int, c_int, c_int,
+    ]
+    lib.gb_flash_attn_gqa_fwd.restype = None
+
+    lib.gb_flash_attn_gqa_bwd.argtypes = [
+        c_vp, c_vp, c_vp, c_vp, c_vp, c_vp,
+        c_vp, c_vp, c_vp,
+        c_int, c_int, c_int, c_int, c_int, c_int,
+        c_dbl, c_int, c_int, c_int,
+    ]
+    lib.gb_flash_attn_gqa_bwd.restype = None
+
+    lib.gb_fill_randn.argtypes = [c_vp, c_int, c_dbl, ctypes.c_uint64, c_int]
+    lib.gb_fill_randn.restype = None
+
     return lib
 
 

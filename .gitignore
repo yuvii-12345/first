@@ -5,4 +5,7 @@ node_modules/
 web/dist/
 .vite/
 checkpoints/
+data/shards/
+cuda/glassbox_cpu_train
+cuda/glassbox_cuda_train
 .DS_Store
