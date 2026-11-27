@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#080b12" />
+  <title>Elsewhere — A field guide to the infinite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="stars" aria-hidden="true"></canvas>
+  <div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Elsewhere home"><span class="brand-mark">✳</span><span>ELSEWHERE</span></a>
+    <div class="mission"><span class="live-dot"></span> DEEP SPACE NETWORK <span class="divider">/</span> <span id="clock">00:00:00 UTC</span></div>
+    <button class="menu-button" id="menuButton" aria-label="Open navigation"><span></span><span></span></button>
+  </header>
+  <main id="top">
+    <section class="hero" aria-label="Explore the unknown">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="eyebrow-line"></span><span id="eyebrow">FIELD NOTE 001 — THE KEPLER FRONTIER</span></div>
+        <h1>There is more<br>than <span class="muted-word">one</span> way<br>to be <em>alive.</em></h1>
+        <p class="intro" id="intro">A field guide to the strange, beautiful worlds waiting just beyond what we know.</p>
+        <div class="actions">
+          <button class="primary-button" id="exploreButton"><span>Explore this world</span><span class="arrow">↗</span></button>
+          <button class="text-button" id="listenButton"><span class="sound-icon">◖</span> <span>Listen to the void</span></button>
+        </div>
+        <div class="coordinates"><span class="coord-label">CURRENT POSITION</span><span class="coord-value" id="coordinates">06h 45m 09s&nbsp;&nbsp; +23° 49′ 07″</span></div>
+      </div>
+      <div class="planet-stage" id="planetStage" aria-label="Illustration of a distant planet">
+        <div class="orbit orbit-back"></div>
+        <div class="orbit orbit-front"></div>
+        <div class="planet-glow"></div>
+        <div class="planet" id="planet">
+          <div class="planet-clouds"></div>
+          <div class="planet-shade"></div>
+          <div class="planet-highlight"></div>
+        </div>
+        <div class="moon"></div>
+        <div class="planet-label"><span class="label-rule"></span><span><b id="planetName">KEPLER-186F</b><small id="planetType">TERRESTRIAL · CLASS M</small></span></div>
+        <div class="distance-tag"><span class="distance-dot"></span><span id="distance">557.7 LIGHT YEARS</span></div>
+        <div class="crosshair crosshair-one">+</div><div class="crosshair crosshair-two">+</div>
+      </div>
+      <div class="side-index"><span>01</span><span class="index-rule"></span><span>04</span></div>
+      <div class="vertical-note">A SMALL WINDOW INTO THE INFINITE</div>
+    </section>
+    <section class="world-strip" aria-label="Choose a world">
+      <div class="strip-heading"><span class="strip-title">CHOOSE YOUR ELSEWHERE</span><span class="strip-count">TRANSMISSION LOG <span>01 / 04</span></span></div>
+      <div class="world-list" id="worldList">
+        <button class="world-card active" data-world="0"><span class="mini-planet mini-one"></span><span class="world-info"><b>Kepler-186f</b><small>THE QUIET GREEN</small></span><span class="card-arrow">↗</span></button>
+        <button class="world-card" data-world="1"><span class="mini-planet mini-two"></span><span class="world-info"><b>HD 189733b</b><small>THE BLUE TEMPEST</small></span><span class="card-arrow">↗</span></button>
+        <button class="world-card" data-world="2"><span class="mini-planet mini-three"></span><span class="world-info"><b>55 Cancri e</b><small>THE DIAMOND SKY</small></span><span class="card-arrow">↗</span></button>
+        <button class="world-card" data-world="3"><span class="mini-planet mini-four"></span><span class="world-info"><b>TRAPPIST-1e</b><small>THE RED HORIZON</small></span><span class="card-arrow">↗</span></button>
+      </div>
+    </section>
+    <footer><span>MADE OF STARSTUFF, MOSTLY.</span><span>THE UNIVERSE IS UNDER NO OBLIGATION TO MAKE SENSE.</span><span>© <span id="year"></span> ELSEWHERE OBSERVATORY</span></footer>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="modal" id="modal" aria-hidden="true">
+    <div class="modal-card"><button class="modal-close" id="closeModal" aria-label="Close">×</button><div class="modal-kicker">TRANSMISSION RECEIVED · 001</div><h2 id="modalTitle">A world in the habitable zone.</h2><p id="modalBody">Kepler-186f is an Earth-sized planet orbiting a cool red dwarf star. Its year lasts just 130 days. Somewhere beneath its quiet, copper sun, the first spring may be happening right now.</p><div class="modal-meta"><span>OBSERVATION WINDOW</span><b>OPEN</b><span>LIGHT TRAVEL TIME</span><b id="modalDistance">557.7 YEARS</b></div></div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
