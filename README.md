@@ -4,6 +4,8 @@
 commitments, a Fiat–Shamir transcript, a mini-DSL, and an inspector that shows
 every intermediate value of a real proof.
 
+**Live: [zeroth-opal.vercel.app](https://zeroth-opal.vercel.app)**
+
 ```bash
 npm install
 npm run dev      # http://localhost:5173
@@ -116,4 +118,5 @@ Montgomery-form native implementation. They are honest, not impressive.
   the full list of deliberate simplifications.
 
 Start with [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the equations, or just open
-the app and break something.
+the app and break something. [`docs/DEPLOY.md`](docs/DEPLOY.md) covers the Vercel
+setup.
