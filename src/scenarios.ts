@@ -183,9 +183,9 @@ function tamperGrid(grid: number[][]): number[][] {
 }
 
 export const SCENARIO_INFO: Array<{ id: ScenarioId; title: string; subtitle: string; badge: string }> = [
-  { id: "multiplier", title: "Multiplication", subtitle: "The smallest possible SNARK statement", badge: "8 gates" },
-  { id: "mimc", title: "MiMC preimage", subtitle: "Prove you know the input to a hash", badge: "512 rows" },
+  { id: "multiplier", title: "Multiplication", subtitle: "The smallest possible SNARK statement", badge: "5 gates" },
+  { id: "mimc", title: "MiMC preimage", subtitle: "Prove you know the input to a hash", badge: "555 gates" },
   { id: "sudoku4", title: "Sudoku 4×4", subtitle: "A completed grid, revealed to nobody", badge: "512 rows" },
-  { id: "sudoku9", title: "Sudoku 9×9", subtitle: "The classic — 3,300 constraints", badge: "4,096 rows" },
+  { id: "sudoku9", title: "Sudoku 9×9", subtitle: "The classic — 3,677 constraints", badge: "4,096 rows" },
   { id: "dsl", title: "Circuit DSL", subtitle: "Write your own statement", badge: "you decide" },
 ];

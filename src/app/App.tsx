@@ -151,7 +151,7 @@ export default function App() {
         {tab === "inspector" && <InspectorView state={state} onProve={goProve} busy={busy} />}
         {tab === "circuit" && <CircuitView scenario={scenario} opts={currentOpts} preview={preview} setScenario={setScenario} />}
         {tab === "soundness" && <SoundnessView state={state} tamper={tamper} run={run} />}
-        {tab === "primer" && <PrimerView />}
+        {tab === "primer" && <PrimerView onBreak={() => setTab("soundness")} />}
       </main>
 
       <footer className="footer">
@@ -335,6 +335,30 @@ function ProveView({
               <p style={{ fontSize: 12 }}>
                 A prover that cannot satisfy its own constraints must not be able to emit a proof. Here it
                 refused.
+              </p>
+            </Panel>
+          )}
+
+          {!result && (
+            <Panel title="Verification" right={<Badge>awaiting proof</Badge>}>
+              <div className="stack" style={{ gap: 11 }}>
+                {[
+                  ["curve", "Proof elements are valid curve points"],
+                  ["identity", "Gate + permutation + boundary identity holds at ζ"],
+                  ["openings", "KZG openings are consistent with the commitments"],
+                ].map(([id, label]) => (
+                  <div key={id} className="row" style={{ gap: 10 }}>
+                    <span className="mono dim" style={{ fontSize: 11, width: 12 }}>
+                      ○
+                    </span>
+                    <span style={{ fontSize: 12.5, color: "#c3c7cf" }}>{label}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ marginTop: 14, marginBottom: 0, fontSize: 12 }}>
+                Three checks over 1088 bytes of proof. Nothing about the witness is
+                among them — press <span className="accent mono">prove &amp; verify</span> to fill
+                them in.
               </p>
             </Panel>
           )}

@@ -4,7 +4,7 @@ import { FrField, Fp12 } from "../../crypto/field";
 import { G1_GEN, G2_GEN, g1Mul, g2Mul } from "../../crypto/curve";
 import { pairing } from "../../crypto/pairing";
 
-export function PrimerView() {
+export function PrimerView({ onBreak }: { onBreak?: () => void } = {}) {
   return (
     <>
       <SectionHead
@@ -22,7 +22,7 @@ export function PrimerView() {
             modulo a prime. This is the ladder, one rung at a time, with the actual formulas the code uses.
           </>
         }
-        right={<Badge>~11k lines · 0 dependencies</Badge>}
+        right={<Badge>7,100 lines · 0 crypto dependencies</Badge>}
       />
 
       <div className="grid-2" style={{ gridTemplateColumns: "minmax(0,1fr) 320px" }}>
@@ -161,10 +161,20 @@ e(C_batch − [v]G, [1]) · e(−W_ζ, [τ−ζ])
           </div>
           <p>
             If <code>N − Z_H·t</code> were a non-zero polynomial, a random ζ would catch it with probability
-            at least <code>1 − (3n+5)/r</code>. That is the soundness argument, and it is the reason a single
+            at least <code>1 − (4n+5)/r</code>. That is the soundness argument, and it is the reason a single
             missing constraint is fatal: with the constraint gone, the polynomial that should have been
             non-zero is zero, and every check passes honestly.
           </p>
+          {onBreak && (
+            <div className="callout warn">
+              <b>This is not hypothetical.</b> The <em>Soundness</em> tab deletes one gate from a circuit,
+              proves <code className="mono">3 × 11 = 34</code>, and lets the verifier accept it. Same code,
+              same verifier, one constraint fewer.{" "}
+              <button className="btn small" style={{ marginLeft: 6 }} onClick={onBreak}>
+                break it yourself →
+              </button>
+            </div>
+          )}
 
           <h2>7 · What this is not</h2>
           <ul>

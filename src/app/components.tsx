@@ -14,7 +14,7 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`panel ${className ?? ""}`}>
+    <section className={["panel", className].filter(Boolean).join(" ")}>
       {title !== undefined && (
         <header className="panel-head">
           <h3>{title}</h3>
@@ -28,7 +28,7 @@ export function Panel({
 }
 
 export function Badge({ children, tone }: { children: ReactNode; tone?: "ok" | "bad" | "warn" }) {
-  return <span className={`badge ${tone ?? ""}`}>{children}</span>;
+  return <span className={["badge", tone].filter(Boolean).join(" ")}>{children}</span>;
 }
 
 export function Stat({ k, v, sub }: { k: string; v: ReactNode; sub?: string }) {
