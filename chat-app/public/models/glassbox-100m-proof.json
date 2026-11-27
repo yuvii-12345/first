@@ -1,0 +1,67 @@
+{
+  "model_name": "Glassbox-100M",
+  "exact_params": 100682496,
+  "config": {
+    "vocab_size": 32768,
+    "d_model": 768,
+    "n_layers": 12,
+    "n_heads": 12,
+    "n_kv_heads": 4,
+    "head_dim": 64,
+    "d_ff": 2048,
+    "context_len": 2048,
+    "tie_weights": true,
+    "rope_base": 10000.0
+  },
+  "param_breakdown": {
+    "tok_emb_tied": 25165824,
+    "attn_per_layer": 1572864,
+    "swiglu_per_layer": 4718592,
+    "norms_total": 19200,
+    "all_12_layers": 75515904
+  },
+  "verified_proofs": {
+    "gqa_flash_attn_gradcheck": {
+      "passed": true,
+      "max_abs_error": 2.09923495947395e-09,
+      "cosine_similarity": 0.9999999999999994,
+      "checked_elements": 384
+    },
+    "gqa_2l_transformer_gradcheck": {
+      "passed": true,
+      "max_abs_error": 5.81503431808895e-10,
+      "cosine_similarity": 1.0000000000000022,
+      "checked_elements": 1660
+    },
+    "kv_cache_max_diff": 0.0,
+    "cpp17_vs_python_loss_diff": 2.5288391113598152e-05,
+    "cpp17_vs_python_gnorm_diff": 6.730876433991284e-07,
+    "gbx_402mb_python_load_sec": 2.189,
+    "gbx_checkpoint_bytes": 402730088
+  },
+  "live_100m_cpu_smoke_steps": [
+    {
+      "step": 1,
+      "loss": 10.4726,
+      "gnorm": 87.0156,
+      "step_sec": 0.879,
+      "gflops": 11.0
+    },
+    {
+      "step": 2,
+      "loss": 8.7736,
+      "gnorm": 37.8546,
+      "step_sec": 0.871,
+      "gflops": 11.1
+    },
+    {
+      "step": 3,
+      "loss": 7.5214,
+      "gnorm": 26.9423,
+      "step_sec": 0.872,
+      "gflops": 11.08
+    }
+  ],
+  "post_step_python_verified_loss": 6.5047,
+  "random_init_baseline_loss": 10.3972
+}
